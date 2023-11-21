@@ -75,6 +75,8 @@ const requestWithRetry = async ({ attempts = maxAttempts, resolveWithFullRespons
       ].join(' ')
       if (key === keys[keys.length - 1]) {
         console.info(message);
+      } else {
+        console.info(`Failed to use key #${keys.indexOf(key)} of ${keys.length}`);
       }
       const rateLimited = retryStatuses.includes(status)
       const dnsError = error.code === 'ENOTFOUND' && error.syscall === 'getaddrinfo'
@@ -128,7 +130,7 @@ module.exports.CrunchbaseClient = ApiClient({
 
 module.exports.GithubClient = ApiClient({
   baseURL: 'https://api.github.com',
-  retryStatuses: [403], // Github returns 403 when rate limiting.
+  retryStatuses: [401, 403], // Github returns 403 when rate limiting.
   delayFn: error => {
     const rateLimitRemaining = parseInt(_.get(error, ['response', 'headers', 'x-ratelimit-remaining'], 1))
     const rateLimitReset = parseInt(_.get(error, ['response', 'headers', 'x-ratelimit-reset'], 1)) * 1000

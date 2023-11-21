@@ -20,6 +20,16 @@ module.exports.render = function({settings, tweetsCount, itemInfo}) {
     return relativeDate(new Date(x));
   };
 
+  function getLinkedIn(itemInfo) {
+    if (itemInfo.extra && itemInfo.extra.override_linked_in) {
+      return itemInfo.extra.override_linked_in;
+    }
+    if (itemInfo.crunchbaseData && itemInfo.crunchbaseData.linkedin) {
+      return itemInfo.crunchbaseData.linkedin;
+    }
+    return '';
+  }
+
   function getRelationStyle(relation) {
     const relationInfo = fields.relation.valuesMap[relation]
     if (relationInfo && relationInfo.color) {
@@ -118,8 +128,12 @@ module.exports.render = function({settings, tweetsCount, itemInfo}) {
     }
   };
 
-  const renderLicenseTag = function({relation, license, hideLicense}) {
+  const renderLicenseTag = function({relation, license, hideLicense, extra}) {
     const { label } = _.find(fields.license.values, {id: license});
+
+    if (extra && extra.hide_license) {
+      return '';
+    }
 
     if (relation === 'company' || hideLicense) {
       return '';
@@ -134,6 +148,9 @@ module.exports.render = function({settings, tweetsCount, itemInfo}) {
       return '';
     }
     if (!itemInfo.bestPracticeBadgeId) {
+      if (settings.global.hide_no_best_practices) {
+        return '';
+      }
       if (itemInfo.oss) {
         const emptyUrl="https://bestpractices.coreinfrastructure.org/";
         return `<a data-type="external" target="_blank" href=${emptyUrl} class="tag tag-grass">
@@ -437,7 +454,7 @@ module.exports.render = function({settings, tweetsCount, itemInfo}) {
     <div class="product-property row">
       <div class="product-property-name col col-40">First Commit</div>
       <div class="product-property-value tight-col col-60">
-        <a data-type="external" target=_blank href=${h(itemInfo.firstCommitLink)}">${formatDate(itemInfo.firstCommitDate)}</a>
+        <a data-type="external" target=_blank href="${h(itemInfo.firstCommitLink)}">${formatDate(itemInfo.firstCommitDate)}</a>
       </div>
     </div>
   ` : '';
@@ -615,6 +632,24 @@ module.exports.render = function({settings, tweetsCount, itemInfo}) {
       if (key === 'clomonitor_name' || key === 'clomonitor_svg') {
         return '';
       }
+      if (key === 'hide_license') {
+        return '';
+      }
+      if (key === 'override_linked_in') {
+        return '';
+      }
+      if (key === 'audits') {
+        const value = itemInfo.extra[key];
+        const lines = (value.map ? value : [value]).map( (auditInfo) => `
+          <div>
+          <a href="${h(auditInfo.url)}" target="_blank">${h(auditInfo.type)} at ${auditInfo.date}</a>
+          </div>
+        `).join('');
+        return `<div class="product-property row">
+          <div class="product-property-name tight-col col-20">Audits</div>
+          <div class="product-proerty-value tight-col col-80">${lines}</div>
+        </div>`;
+      }
       const value = itemInfo.extra[key];
       const keyText = (function() {
         const step1 =  key.replace(/_url/g, '');
@@ -730,12 +765,12 @@ module.exports.render = function({settings, tweetsCount, itemInfo}) {
             </div>
           </div> ` : ''
       }
-      ${itemInfo.crunchbaseData && itemInfo.crunchbaseData.linkedin ? `
+      ${getLinkedIn(itemInfo) ? `
           <div class="product-property row">
             <div class="product-property-name col col-20">LinkedIn</div>
             <div class="product-property-value col col-80">
-              <a data-type=external target=_blank href="${itemInfo.crunchbaseData.linkedin}">
-                ${shortenUrl(itemInfo.crunchbaseData.linkedin)}
+              <a data-type=external target=_blank href="${getLinkedIn(itemInfo)}">
+                ${shortenUrl(getLinkedIn(itemInfo))}
               </a>
             </div>
           </div> ` : ''

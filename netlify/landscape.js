@@ -30,11 +30,14 @@ const debug = function() {
   }
 }
 
-const runLocal = function(command) {
+const runLocal = function(command, showProgress) {
 
   // report the output once every 5 seconds
   let lastOutput = { s: '', time: new Date().getTime() };
   let displayIfRequired = function(text) {
+    if (showProgress) {
+      console.info(text);
+    }
     lastOutput.s = lastOutput.s + text;
   }
 
@@ -89,7 +92,7 @@ const runRemote = async function(command, count = 3) {
     ${command}
 EOSSH
 `
-  const result = await runLocal(bashCommand);
+  const result = await runLocal(bashCommand, true);
   if (result.exitCode === 255 && count > 0) {
     console.info(`Attempts to retry more: ${count}`);
     return await runRemote(command, count - 1);
@@ -141,56 +144,6 @@ const makeRemoteBuildWithCache = async function() {
   const hash = getHash();
   const tmpHash = require('crypto').createHash('sha256').update(getTmpFile()).digest('hex');
   // lets guarantee npm install for this folder first
-  {
-    const buildCommand = [
-      "(ls . ~/.nvm/nvm.sh || (curl -s -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash >/dev/null))",
-      ". ~/.nvm/nvm.sh",
-      `nvm install ${nvmrc}`,
-      `echo 0`,
-      `nvm use ${nvmrc}`,
-      `echo 1`,
-      `npm install -g agentkeepalive --save`,
-      `npm install -g npm --no-progress`,
-      `npm install -g yarn@latest`,
-      `cd /opt/repo/packageRemote`,
-      `yarn >/dev/null`
-    ].join(' && ');
-    const npmInstallCommand = `
-      mkdir -p /root/builds/node_cache
-      ls -l /root/builds/node_cache/${hash}/yarnLocal/unplugged 2>/dev/null || (
-          mkdir -p /root/builds/node_cache/${tmpHash}/{yarnLocal,nvm,yarnGlobal}
-          cp -r /root/builds/${folder}/packageRemote/.yarn/* /root/builds/node_cache/${tmpHash}/yarnLocal
-          chmod -R 777 /root/builds/node_cache/${tmpHash}
-          docker run --shm-size 1G --rm -t \
-            -v /root/builds/node_cache/${tmpHash}/yarnLocal:/opt/repo/packageRemote/.yarn \
-            -v /root/builds/node_cache/${tmpHash}/nvm:${dockerHome}/.nvm \
-            -v /root/builds/node_cache/${tmpHash}/yarnGlobal:${dockerHome}/.yarn \
-            -v /root/builds/${folder}:/opt/repo \
-            ${dockerImage} /bin/bash -lc "${buildCommand}"
-
-          ln -s /root/builds/node_cache/${tmpHash} /root/builds/node_cache/${hash} || (
-            rm -rf /root/builds/node_cache/${tmpHash}
-          )
-          echo "packages for ${hash} had been installed"
-      )
-      chmod -R 777 /root/builds/node_cache/${hash}
-    `;
-    debug(npmInstallCommand);
-    console.info(`Remote with cache: Installing npm packages if required`);
-    const output = await runRemote(npmInstallCommand);
-    console.info(`Remote with cache: Output from npm install: exit code: ${output.exitCode}`);
-    if (output.exitCode !== 0) {
-      console.info(output.text);
-      throw new Error('Remote with cahce: npm install failed');
-    }
-
-    const lines = output.text.split('\n');
-    const index = lines.indexOf(lines.filter( (line) => line.match(/added \d+ packages in/))[0]);
-    const filteredLines = lines.slice(index !== -1 ? index : 0).join('\n');
-    console.info(filteredLines || 'Reusing an existing folder for node');
-
-  }
-
   // do not pass REVIEW_ID because on failure we will run it locally and report
   // from there
   const vars = [
@@ -206,9 +159,14 @@ const makeRemoteBuildWithCache = async function() {
   const outputFolder = 'landscape' + getTmpFile();
   const buildCommand = [
     `cd /opt/repo/packageRemote`,
+    "(ls . ~/.nvm/nvm.sh || (curl -s -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash >/dev/null))",
     `. ~/.nvm/nvm.sh`,
+    `cat .nvmrc`,
     `nvm install ${nvmrc}`,
     `nvm use ${nvmrc}`,
+    `npm install -g agentkeepalive --save`,
+    `npm install -g npm@9 --no-progress`,
+    `npm install -g yarn@latest`,
     `yarn`,
     `git config --global --add safe.directory /opt/repo`,
     `export NODE_OPTIONS="--unhandled-rejections=strict"`,
@@ -220,16 +178,12 @@ const makeRemoteBuildWithCache = async function() {
       mkdir -p /root/builds/${outputFolder}
       chmod -R 777 /root/builds/${outputFolder}
       chmod -R 777 /root/builds/${folder}
-      chmod -R 777 /root/builds/node_cache/${hash}
 
       docker run --shm-size 1G --rm -t \
         ${vars.map( (v) => ` -e ${v}="${process.env[v]}" `).join(' ')} \
         -e NVM_NO_PROGRESS=1 \
         -e NETLIFY=1 \
         -e PARALLEL=TRUE \
-        -v /root/builds/node_cache/${hash}/yarnLocal:/opt/repo/packageRemote/.yarn \
-        -v /root/builds/node_cache/${hash}/nvm:${dockerHome}/.nvm \
-        -v /root/builds/node_cache/${hash}/yarnGlobal:${dockerHome}/.yarn \
         -v /root/builds/${folder}:/opt/repo \
         -v /root/builds/${outputFolder}:/dist \
         ${dockerImage} /bin/bash -lc "${buildCommand}"
@@ -289,7 +243,6 @@ async function main() {
   await runLocal('rm package*.json');
 
   const cleanPromise = runRemoteWithoutErrors(`
-    find builds/node_cache -maxdepth 1 -mtime +1 -exec rm -rf {} +;
     find builds/ -maxdepth 1 -not -path "builds/node_cache" -mtime +1 -exec rm -rf {} +;
   `).catch(function() {
     console.info('Failed to clean up a builds folder');
